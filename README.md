@@ -46,15 +46,21 @@ The plugin checks for and reports changes to a comprehensive set of SSL certific
 
 ## Usage
 
-When creating a watch, select "SSL Certificate Information and Expiry Monitoring" as the processor. Enter the domain you want to monitor as the URL.
+When creating a watch, select "SSL Certificate Information and Expiry Monitoring" as the processor. Enter the domain or URL you want to monitor.
 
-The plugin will automatically fetch the SSL certificate information and display it in a structured format. ChangeDetection.io will then track changes to this information over time, alerting you to any modifications.
+The plugin accepts:
+- Simple domain names (e.g., `example.com`)
+- Full URLs with protocols (e.g., `https://example.com/path`)
+- Domains with custom ports (e.g., `example.com:8443` or `https://example.com:8443`)
+
+The plugin will automatically extract the hostname and port from the input, fetch the SSL certificate information, and display it in a structured format. ChangeDetection.io will then track changes to this information over time, alerting you to any modifications.
 
 This is particularly useful for:
 - Monitoring certificate expiration
 - Detecting unexpected certificate changes
 - Tracking security improvements or regressions
 - Ensuring compliance with security best practices
+- Monitoring certificates on non-standard ports
 
 ## Requirements
 

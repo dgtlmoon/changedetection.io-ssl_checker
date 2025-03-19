@@ -35,7 +35,7 @@ def extract_host_port(url):
     
     return hostname, port
 
-def get_certificate_details(url, port=None):
+def get_certificate_details(url, port=None, verify=True):
     # Extract hostname and port from URL if needed
     if '://' in url or ':' in url:
         hostname, extracted_port = extract_host_port(url)
@@ -46,7 +46,12 @@ def get_certificate_details(url, port=None):
         hostname = url
         port = port if port is not None else 443
     
-    context = ssl.create_default_context()
+    # Create context with verification according to the verify parameter
+    if verify:
+        context = ssl.create_default_context()
+    else:
+        # Create a context that doesn't verify the certificate
+        context = ssl._create_unverified_context()
     
     with socket.create_connection((hostname, port), timeout=10) as sock:
         with context.wrap_socket(sock, server_hostname=hostname) as ssock:
@@ -118,22 +123,118 @@ def get_certificate_details(url, port=None):
 def check_tls_versions(hostname, port=443):
     """Check which TLS versions the server supports."""
     tls_versions = {}
-    for version, method in [
-        ("TLS 1.0", SSL.TLSv1_METHOD),
-        ("TLS 1.1", SSL.TLSv1_1_METHOD),
-        ("TLS 1.2", SSL.TLSv1_2_METHOD),
-        ("TLS 1.3", SSL.TLS_METHOD)
-    ]:
-        context = SSL.Context(method)
+    
+    # Default all versions to False - they will be set to True only if verified
+    for version in ["TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3"]:
+        tls_versions[version] = False
+    
+    # First try to connect with default unverified context to see what's available
+    # This allows us to test TLS compatibility even with invalid/expired certs
+    try:
+        import ssl
+        # Use unverified context to avoid certificate validation errors
+        default_context = ssl._create_unverified_context()
+        with socket.create_connection((hostname, port), timeout=5) as sock:
+            with default_context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                # The server supports at least this version
+                version_negotiated = ssock.version()
+                if version_negotiated == "TLSv1.3":
+                    tls_versions["TLS 1.3"] = True
+                elif version_negotiated == "TLSv1.2":
+                    tls_versions["TLS 1.2"] = True
+                elif version_negotiated == "TLSv1.1":
+                    tls_versions["TLS 1.1"] = True
+                elif version_negotiated == "TLSv1":
+                    tls_versions["TLS 1.0"] = True
+    except Exception:
+        # If default connection fails, we'll continue with explicit version tests
+        pass
+    
+    # If we don't have a confirmed TLS 1.2 yet, test it explicitly
+    if not tls_versions["TLS 1.2"]:
         try:
+            import ssl
+            context = ssl._create_unverified_context(ssl.PROTOCOL_TLS_CLIENT)
+            # Set only TLS 1.2
+            context.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
+            context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
+            # For newer Python versions that support TLS 1.3
+            try:
+                context.options |= ssl.OP_NO_TLSv1_3
+            except AttributeError:
+                pass
+                
             with socket.create_connection((hostname, port), timeout=5) as sock:
-                with SSL.Connection(context, sock) as conn:
-                    conn.set_tlsext_host_name(hostname.encode())
-                    conn.set_connect_state()
-                    conn.do_handshake()
-                    tls_versions[version] = True
-        except:
-            tls_versions[version] = False
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    if ssock.version() == "TLSv1.2":
+                        tls_versions["TLS 1.2"] = True
+        except Exception:
+            # Keep as False
+            pass
+    
+    # Test TLS 1.3 explicitly if not already determined
+    if not tls_versions["TLS 1.3"]:
+        try:
+            import ssl
+            # Check if TLS 1.3 is available in this Python version
+            if hasattr(ssl, "TLSVersion") and hasattr(ssl.TLSVersion, "TLSv1_3"):
+                context = ssl._create_unverified_context(ssl.PROTOCOL_TLS_CLIENT)
+                # Only allow TLS 1.3
+                context.minimum_version = ssl.TLSVersion.TLSv1_3
+                context.maximum_version = ssl.TLSVersion.TLSv1_3
+                
+                with socket.create_connection((hostname, port), timeout=5) as sock:
+                    with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                        if ssock.version() == "TLSv1.3":
+                            tls_versions["TLS 1.3"] = True
+        except Exception:
+            # Keep as False
+            pass
+    
+    # Test TLS 1.1 if not already determined
+    if not tls_versions["TLS 1.1"]:
+        try:
+            import ssl
+            context = ssl._create_unverified_context(ssl.PROTOCOL_TLS_CLIENT)
+            # Only allow TLS 1.1
+            context.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
+            context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_2
+            # For newer Python versions that support TLS 1.3
+            try:
+                context.options |= ssl.OP_NO_TLSv1_3
+            except AttributeError:
+                pass
+                
+            with socket.create_connection((hostname, port), timeout=5) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    if ssock.version() == "TLSv1.1":
+                        tls_versions["TLS 1.1"] = True
+        except Exception:
+            # Keep as False
+            pass
+    
+    # Test TLS 1.0 if not already determined
+    if not tls_versions["TLS 1.0"]:
+        try:
+            import ssl
+            context = ssl._create_unverified_context(ssl.PROTOCOL_TLS_CLIENT)
+            # Only allow TLS 1.0
+            context.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
+            context.options |= ssl.OP_NO_TLSv1_1 | ssl.OP_NO_TLSv1_2
+            # For newer Python versions that support TLS 1.3
+            try:
+                context.options |= ssl.OP_NO_TLSv1_3
+            except AttributeError:
+                pass
+                
+            with socket.create_connection((hostname, port), timeout=5) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    if ssock.version() == "TLSv1":
+                        tls_versions["TLS 1.0"] = True
+        except Exception:
+            # Keep as False
+            pass
+    
     return tls_versions
 
 def check_ocsp_status(cert, hostname):
